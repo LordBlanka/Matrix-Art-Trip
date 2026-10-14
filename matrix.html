@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Matrix 3D</title>
+<style>
+  :root { color-scheme: dark; --bg:#000; --fg:#7dff9b; }
+  html, body { height:100%; margin:0; background:var(--bg); overflow:hidden; touch-action:none; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #hint { position:fixed; bottom:calc(16px + env(safe-area-inset-bottom,0px)); width:100%; text-align:center;
+    color:var(--fg); font:13px monospace; opacity:.6; pointer-events:none; letter-spacing:.1em; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">mova para pilotar · segure o clique/dedo para ativar o hiperespaço</div>
+<script>
+const chars = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789".split("");
+const NC = chars.length, CELL = 48;
+
+// Atlas pré-renderizado: linha 0 = verde, linha 1 = cabeça clara (desenhar sprite é bem mais rápido que fillText)
+const atlas = document.createElement("canvas");
+atlas.width = NC * CELL; atlas.height = CELL * 2;
+const a = atlas.getContext("2d");
+a.font = "40px monospace"; a.textAlign = "center"; a.textBaseline = "middle";
+chars.forEach((ch, i) => {
+  a.fillStyle = "#00ff46"; a.shadowColor = "#00ff46"; a.shadowBlur = 6;
+  a.fillText(ch, i * CELL + CELL / 2, CELL / 2);
+  a.fillStyle = "#e0ffe8"; a.shadowColor = "#7dff9b"; a.shadowBlur = 10;
+  a.fillText(ch, i * CELL + CELL / 2, CELL * 1.5);
+});
+
+const cv = document.getElementById("c"), ctx = cv.getContext("2d", {alpha:false});
+let W, H;
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 1.5);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener("resize", resize); resize();
+
+const N = 800, FAR = 3200, NEAR = 80, FOCAL = 600, GAP = 40, SPREAD = 2200;
+const ri = () => (Math.random() * NC) | 0;
+function make(z) {
+  const len = 12 + ((Math.random() * 16) | 0);
+  return {
+    x: (Math.random() - .5) * 2 * SPREAD,
+    y: (Math.random() - .5) * 2 * SPREAD,
+    z: z ?? FAR, len,
+    fall: 200 + Math.random() * 400,
+    g: Int16Array.from({length: len}, ri)
+  };
+}
+const streams = Array.from({length: N}, () => make(NEAR + Math.random() * (FAR - NEAR)));
+
+let tx = 0, ty = 0, camX = 0, camY = 0, speed = 500, boost = false, active = false, last = 0;
+addEventListener("pointermove", e => {
+  active = true;
+  tx = (e.clientX / W - .5) * 2;
+  ty = (e.clientY / H - .5) * 2;
+});
+addEventListener("pointerdown", () => boost = true);
+addEventListener("pointerup", () => boost = false);
+addEventListener("pointercancel", () => boost = false);
+
+function frame(t) {
+  const dt = Math.min((t - last) / 1000, .04); last = t;
+  if (!active) { tx = Math.sin(t / 2800) * .6; ty = Math.cos(t / 3600) * .4; }
+  const k = 1 - Math.exp(-3 * dt); // suavização independente do FPS
+  camX += (tx * 900 - camX) * k;
+  camY += (ty * 700 - camY) * k;
+  speed += ((boost ? 2600 : 500) - speed) * k;
+
+  // fundo: quase sem rastro normal; um pouco de rastro só no hiperespaço
+  ctx.globalAlpha = boost ? .3 : .75;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, H);
+
+  const cx = W / 2 - tx * 60, cy = H / 2 - ty * 45;
+  ctx.globalAlpha = 1;
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * .5);
+  g.addColorStop(0, "rgba(0,255,90,.10)"); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  for (let s of streams) {
+    s.z -= speed * dt;
+    s.y += s.fall * dt;
+    if (s.y - s.len * GAP > SPREAD) s.y = -SPREAD;
+    if (s.z < NEAR) { Object.assign(s, make(FAR)); continue; }
+
+    const sc = FOCAL / s.z;
+    const sx = cx + (s.x - camX) * sc;
+    if (sx < -60 || sx > W + 60) continue;
+    const size = Math.max(5, 36 * sc);
+    const fade = Math.min(1, (FAR - s.z) / 900) * Math.min(1, s.z / 220);
+    const half = size / 2;
+    for (let i = 0; i < s.len; i++) {
+      const sy = cy + (s.y - i * GAP - camY) * sc;
+      if (sy < -40 || sy > H + 40) continue;
+      // troca constante de algarismos: a cabeça muda todo frame, o resto muda rápido
+      if (i === 0 || Math.random() < .12) s.g[i] = ri();
+      ctx.globalAlpha = fade * (1 - i / s.len);
+      ctx.drawImage(atlas, s.g[i] * CELL, i === 0 ? CELL : 0, CELL, CELL, sx - half, sy - half, size, size);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(t => { last = t; frame(t); });
+</script>
+</body>
+</html>
