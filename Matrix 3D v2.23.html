@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Matrix 3D</title>
+<style>
+  :root { color-scheme: dark; --bg:#000; --fg:#7dff9b; }
+  html, body { height:100%; margin:0; background:var(--bg); overflow:hidden; touch-action:none; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  html, body, canvas { cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23d8fff0' stop-opacity='.95'/%3E%3Cstop offset='.5' stop-color='%2300ff9c' stop-opacity='.55'/%3E%3Cstop offset='1' stop-color='%2300a8ff' stop-opacity='.75'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M4 2 L4 24 L10 18.5 L14.5 28 L18.5 26 L14 17 L22 17 Z' fill='none' stroke='%23000' stroke-width='2.6' stroke-linejoin='round'/%3E%3Cpath d='M4 2 L4 24 L10 18.5 L14.5 28 L18.5 26 L14 17 L22 17 Z' fill='url(%23g)' stroke='%23b4ffd2' stroke-width='.8' stroke-linejoin='round'/%3E%3Ccircle cx='9' cy='11' r='3.2' fill='white' fill-opacity='.18' stroke='white' stroke-opacity='.75' stroke-width='.9'/%3E%3Cpath d='M7.4 10 A2 2 0 0 1 9.2 8.8' fill='none' stroke='white' stroke-width='.9' stroke-linecap='round'/%3E%3C/svg%3E") 4 2, auto; }
+  #hint { position:fixed; bottom:calc(16px + env(safe-area-inset-bottom,0px)); width:100%; text-align:center;
+    color:var(--fg); font:13px monospace; opacity:.6; pointer-events:none; letter-spacing:.1em; }
+  #adv { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%) scale(.96); width:min(560px,86vw); box-sizing:border-box;
+    padding:22px 26px; background:rgba(0,12,4,.78); border:1px solid rgba(0,255,70,.55); border-radius:10px;
+    box-shadow:0 0 30px rgba(0,255,70,.25); color:#c9ffd6; font:18px/1.5 monospace; opacity:0; pointer-events:none;
+    transition:opacity .4s, transform .4s; }
+  #adv.on { opacity:1; transform:translate(-50%,-50%) scale(1); }
+  #advText { margin:0; }
+  #advAuthor { display:block; margin-top:14px; text-align:right; color:#7dff9b; font-size:14px; opacity:0; transition:opacity .5s; }
+  #cur { display:none; position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; }
+  html, body, canvas { cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='M1.5 1.5 L1.5 18.5 L5.5 14.8 L8.4 21.5 L10.9 20.4 L8.1 13.9 L13.3 13.9 Z' fill='none' stroke='%23000' stroke-width='2.6' stroke-linejoin='round'/%3E%3Cpath d='M1.5 1.5 L1.5 18.5 L5.5 14.8 L8.4 21.5 L10.9 20.4 L8.1 13.9 L13.3 13.9 Z' fill='none' stroke='%23fff' stroke-width='1' stroke-linejoin='round'/%3E%3C/svg%3E") 1 1, auto !important; }
+  #c { opacity:0; transition:opacity 1.4s ease; }
+  #c.on { opacity:1; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<canvas id="cur"></canvas>
+<div id="adv"><p id="advText"></p><span id="advAuthor"></span></div>
+<div id="hint">Mova para pilotar · Segure para o hiperespaço<br>Toque 2x para um conselho · 1 toque fecha</div>
+<script>
+const chars = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const NC = chars.length, CELL = 48;
+
+// Atlas pré-renderizado: linha 0 = verde, linha 1 = cabeça clara (desenhar sprite é bem mais rápido que fillText)
+const atlas = document.createElement("canvas");
+atlas.width = NC * CELL; atlas.height = CELL * 2;
+const a = atlas.getContext("2d");
+a.font = "40px monospace"; a.textAlign = "center"; a.textBaseline = "middle";
+chars.forEach((ch, i) => {
+  a.fillStyle = "#00ff46"; a.shadowColor = "#00ff46"; a.shadowBlur = 6;
+  a.fillText(ch, i * CELL + CELL / 2, CELL / 2);
+  a.fillStyle = "#4dff7c"; a.shadowColor = "#00ff46"; a.shadowBlur = 10;
+  a.fillText(ch, i * CELL + CELL / 2, CELL * 1.5);
+});
+
+const cv = document.getElementById("c"), ctx = cv.getContext("2d", {alpha:false, desynchronized:true});
+let W, H;
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 1.5);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener("resize", resize); resize();
+
+const N = 1300, FAR = 3200, NEAR = 80, FOCAL = 600, GAP = 40, SPREAD = 2600;
+const ri = () => (Math.random() * NC) | 0;
+function make(z) {
+  const len = 12 + ((Math.random() * 16) | 0);
+  return {
+    x: (Math.random() - .5) * 2 * SPREAD,
+    y: (Math.random() - .5) * 2 * SPREAD,
+    z: z ?? FAR, len,
+    fall: 200 + Math.random() * 400,
+    g: Int16Array.from({length: 28}, ri)
+  };
+}
+// reaproveita a coluna em vez de criar outra (evita micro-travadas do coletor de lixo)
+function respawn(s) {
+  s.x = (Math.random() - .5) * 2 * SPREAD; s.y = (Math.random() - .5) * 2 * SPREAD;
+  s.z = FAR; s.len = 12 + ((Math.random() * 16) | 0); s.fall = 200 + Math.random() * 400;
+}
+const streams = Array.from({length: N}, () => make(NEAR + Math.random() * (FAR - NEAR)));
+
+let tx = 0, ty = 0, camX = 0, camY = 0, speed = 500, boost = false, active = false, last = 0;
+addEventListener("pointermove", e => {
+  active = true; mx = e.clientX; my = e.clientY; showCur = e.pointerType === "mouse";
+  tx = (e.clientX / W - .5) * 2;
+  ty = (e.clientY / H - .5) * 2;
+});
+const advices = [
+  ["Sua alma assume a cor dos seus pensamentos.", "Marco Aurélio"],
+  ["O obstáculo no caminho se torna o caminho.", "Marco Aurélio"],
+  ["Não perca tempo discutindo como deve ser um bom homem. Seja um.", "Marco Aurélio"],
+  ["Ao amanhecer, quando custar levantar, diga a si mesmo: acordo para fazer o trabalho de um ser humano.", "Marco Aurélio"],
+  ["Sofremos mais na imaginação do que na realidade.", "Sêneca"],
+  ["Enquanto adiamos a vida, ela passa.", "Sêneca"],
+  ["Não é porque as coisas são difíceis que não ousamos; é porque não ousamos que elas são difíceis.", "Sêneca"],
+  ["Não são as coisas que perturbam as pessoas, mas o julgamento que fazem delas.", "Epicteto"],
+  ["Primeiro diga a si mesmo o que você quer ser; depois faça o que tem de fazer.", "Epicteto"],
+  ["Não estrague o que você tem desejando o que não tem.", "Epicuro"],
+  ["Uma jornada de mil milhas começa com um único passo.", "Lao-Tsé"],
+  ["Quem conhece os outros é sábio; quem conhece a si mesmo é iluminado.", "Lao-Tsé"],
+  ["Quem sabe que tem o bastante é rico.", "Lao-Tsé"],
+  ["Conheça o inimigo e conheça a si mesmo, e em cem batalhas nunca estará em perigo.", "Sun Tzu"],
+  ["O começo é a parte mais importante do trabalho.", "Platão"],
+  ["Uma vida sem reflexão não vale a pena ser vivida.", "Sócrates"],
+  ["Nada é permanente, exceto a mudança.", "Heráclito"],
+  ["O ódio nunca termina com ódio, mas com amor.", "Buda"],
+  ["Não basta saber, é preciso aplicar; não basta querer, é preciso fazer.", "Goethe"],
+  ["Quem tem um porquê para viver suporta quase qualquer como.", "Nietzsche"],
+  ["Vá confiante na direção dos seus sonhos e viva a vida que imaginou.", "Henry David Thoreau"],
+  ["Você ama a vida? Então não desperdice tempo, pois é do que a vida é feita.", "Benjamin Franklin"],
+  ["Nossas dúvidas são traidoras: nos fazem perder o bem que poderíamos conquistar, por medo de tentar.", "William Shakespeare"],
+  ["Quem lê muito e anda muito, vê muito e sabe muito.", "Miguel de Cervantes"],
+  ["Nenhum vento é favorável a quem não sabe para qual porto navega.", "Sêneca"],
+  ["A vida, se você souber usá-la, é longa.", "Sêneca"],
+  ["O melhor modo de se vingar é não ser como quem o ofendeu.", "Marco Aurélio"],
+  ["Muito pouco é necessário para ter uma vida feliz.", "Marco Aurélio"],
+  ["Não peça que os acontecimentos sejam como você quer; queira que sejam como são, e será feliz.", "Epicteto"],
+  ["Quem vence os outros é forte; quem vence a si mesmo é poderoso.", "Lao-Tsé"],
+  ["Nada no mundo é mais suave que a água, e nada a supera ao vencer o que é duro.", "Lao-Tsé"],
+  ["Ao ver um homem bom, procure imitá-lo; ao ver um mau, examine a si mesmo.", "Confúcio"],
+  ["Aprender sem refletir é inútil; refletir sem aprender é perigoso.", "Confúcio"],
+  ["Não faça aos outros o que não quer que façam a você.", "Confúcio"],
+  ["Tudo o que somos é resultado do que pensamos.", "Buda (Dhammapada)"],
+  ["A mais valiosa das vitórias é a vitória sobre si mesmo.", "Platão"],
+  ["A mente não é um vaso a ser preenchido, mas um fogo a ser aceso.", "Plutarco"],
+  ["O caráter de uma pessoa é o seu destino.", "Heráclito"],
+  ["Enquanto há vida, há esperança.", "Cícero"],
+  ["Aproveite o dia e confie o mínimo possível no amanhã.", "Horácio"],
+  ["A fortuna favorece os audazes.", "Virgílio"],
+  ["Sou humano; nada do que é humano me é estranho.", "Terêncio"],
+  ["Só sei que nada sei.", "Sócrates"],
+  ["A educação tem raízes amargas, mas seus frutos são doces.", "Aristóteles"],
+  ["Atreva-se a saber! Tenha coragem de usar o seu próprio entendimento.", "Immanuel Kant"],
+  ["Não rir, não lamentar, nem detestar, mas compreender.", "Baruch Spinoza"],
+  ["O que não me mata me fortalece.", "Nietzsche"],
+  ["O ótimo é inimigo do bom.", "Voltaire"],
+  ["Conhecimento é poder.", "Francis Bacon"],
+  ["Nunca deixe para amanhã o que você pode fazer hoje.", "Benjamin Franklin"],
+  ["Nada de grande foi realizado sem entusiasmo.", "Ralph Waldo Emerson"],
+  ["Confie em si mesmo: todo coração vibra com essa corda de ferro.", "Ralph Waldo Emerson"],
+  ["A bondade é o único investimento que nunca falha.", "Henry David Thoreau"],
+  ["A coragem é a resistência ao medo, o domínio do medo, e não a ausência dele.", "Mark Twain"],
+  ["Sozinhos podemos fazer tão pouco; juntos podemos fazer muito.", "Helen Keller"],
+  ["Tudo vale a pena se a alma não é pequena.", "Fernando Pessoa"],
+  ["O essencial é invisível aos olhos.", "Antoine de Saint-Exupéry"],
+  ["Todos os problemas da humanidade vêm da incapacidade de ficar quieto sozinho em um quarto.", "Blaise Pascal"],
+  ["Desejar a cura é parte da cura.", "Sêneca"],
+  ["Não temos pouco tempo; é que desperdiçamos muito dele.", "Sêneca"],
+  ["O que não é bom para a colmeia não é bom para a abelha.", "Marco Aurélio"],
+  ["Se algo é humanamente possível, não pense que seja inatingível para você.", "Marco Aurélio"],
+  ["A esperança é o sonho de quem está acordado.", "Aristóteles"],
+  ["A amizade é uma alma que habita dois corpos.", "Aristóteles"],
+  ["Aquilo que temos de aprender a fazer, aprendemos fazendo.", "Aristóteles"],
+  ["Conhece-te a ti mesmo.", "Inscrição no Templo de Delfos"],
+  ["O homem superior é modesto no falar, mas excede no agir.", "Confúcio"],
+  ["Errar e não corrigir é o que realmente se chama errar.", "Confúcio"],
+  ["Quem se põe na ponta dos pés não se sustenta firme.", "Lao-Tsé"],
+  ["A saúde é o maior presente; o contentamento, a maior riqueza.", "Buda (Dhammapada)"],
+  ["Melhor que mil palavras vazias é uma única palavra que traz paz.", "Buda (Dhammapada)"],
+  ["Ninguém entra duas vezes no mesmo rio, pois nem o rio nem a pessoa são os mesmos.", "Heráclito"],
+  ["Há tempo para tudo debaixo do céu.", "Bíblia (Eclesiastes)"],
+  ["A resposta branda desvia o furor.", "Bíblia (Provérbios)"],
+  ["Quem anda com os sábios torna-se sábio.", "Bíblia (Provérbios)"],
+  ["A liberdade é um dos dons mais preciosos que os céus deram aos homens.", "Miguel de Cervantes"],
+  ["Quem canta seus males espanta.", "Miguel de Cervantes"],
+  ["Caminhante, não há caminho; faz-se caminho ao andar.", "Antonio Machado"],
+  ["Mudam-se os tempos, mudam-se as vontades.", "Luís de Camões"],
+  ["Para ser grande, sê inteiro: nada teu exagera ou exclui.", "Fernando Pessoa (Ricardo Reis)"],
+  ["Navegar é preciso; viver não é preciso.", "Fernando Pessoa"],
+  ["Ama e faz o que quiseres.", "Santo Agostinho"],
+  ["Segue o teu caminho e deixa que falem.", "Dante Alighieri"],
+  ["Podemos ser sabedores com o saber alheio, mas só somos sábios com a nossa própria sabedoria.", "Montaigne"],
+  ["A vida só pode ser compreendida olhando-se para trás, mas deve ser vivida olhando-se para a frente.", "Søren Kierkegaard"],
+  ["Todo artista foi, um dia, um amador.", "Ralph Waldo Emerson"],
+  ["O segredo da existência humana não está só em viver, mas em saber para que se vive.", "Dostoiévski"],
+  ["Todos pensam em mudar o mundo, mas ninguém pensa em mudar a si mesmo.", "Tolstói"],
+  ["Aquilo que você herdou de seus pais, conquiste para possuir de fato.", "Goethe"],
+  ["Não se atravessa o mar apenas olhando a água.", "Rabindranath Tagore"],
+  ["A vida é breve, a arte é longa.", "Hipócrates"],
+  ["Se vi mais longe, foi por estar sobre ombros de gigantes.", "Isaac Newton"],
+  ["A riqueza não está em ter grandes posses, mas em ter poucas necessidades.", "Epicteto"],
+  ["Nunca é cedo nem tarde demais para cuidar da alma.", "Epicuro"],
+  ["A suprema arte da guerra é vencer sem lutar.", "Sun Tzu"],
+  ["A coragem é saber o que não temer.", "Platão"],
+  ["Cultivemos o nosso jardim.", "Voltaire"]
+];
+const advBox = document.getElementById("adv"), advText = document.getElementById("advText"), advAuthor = document.getElementById("advAuthor");
+let holdT = 0, lastTap = 0, lastX = 0, lastY = 0, lastIdx = -1, typer = 0, hideT = 0;
+function showAdvice() {
+  let i; do { i = (Math.random() * advices.length) | 0; } while (i === lastIdx);
+  lastIdx = i;
+  const [q, who] = advices[i];
+  clearInterval(typer); clearTimeout(hideT);
+  advText.textContent = ""; advAuthor.textContent = ""; advAuthor.style.opacity = 0;
+  advBox.classList.add("on");
+  let n = 0;
+  typer = setInterval(() => {
+    n++; advText.textContent = q.slice(0, n);
+    if (n >= q.length) {
+      clearInterval(typer);
+      advAuthor.textContent = "— " + who; advAuthor.style.opacity = 1;
+      hideT = setTimeout(() => advBox.classList.remove("on"), 15000);
+    }
+  }, 28);
+}
+function hideAdvice() { clearInterval(typer); clearTimeout(hideT); advBox.classList.remove("on"); }
+addEventListener("pointerdown", e => {
+  clearTimeout(holdT);
+  const now = performance.now();
+  const isDouble = now - lastTap < 350 && Math.hypot(e.clientX - lastX, e.clientY - lastY) < 50;
+  if (isDouble) { showAdvice(); lastTap = 0; return; }   // 2 cliques: conselho, sem hiperespaço
+  lastTap = now; lastX = e.clientX; lastY = e.clientY;
+  if (advBox.classList.contains("on")) { hideAdvice(); return; }   // 1 clique: fecha a caixa, sem hiperespaço
+  holdT = setTimeout(() => boost = true, 300);   // hiperespaço só ao segurar
+});
+addEventListener("pointerup", () => { clearTimeout(holdT); boost = false; });
+addEventListener("pointercancel", () => { clearTimeout(holdT); boost = false; });
+
+// Cursor-lupa: seta com interior transparente que amplia ao vivo o que está por trás
+const cur = document.getElementById("cur"), cctx = cur.getContext("2d");
+let mx = 0, my = 0, showCur = false;
+const arrow = new Path2D("M0 0 L0 17 L4 13.3 L6.9 20 L9.4 18.9 L6.6 12.4 L11.8 12.4 Z");
+const CS = 1, ZOOM = 1;
+function sizeCur() { cur.width = cv.width; cur.height = cv.height; }
+addEventListener("resize", sizeCur); sizeCur();
+document.documentElement.addEventListener("mouseleave", () => showCur = false);
+function drawCursor() {
+  const d = cv.width / W;
+  cctx.setTransform(1, 0, 0, 1, 0, 0);
+  cctx.clearRect(0, 0, cur.width, cur.height);
+  if (!showCur) return;
+  const bw = 18 * CS, bh = 26 * CS, mcx = mx + bw / 2, mcy = my + bh / 2;
+  // interior: pedaço ampliado da animação
+  cctx.save();
+  cctx.setTransform(d * CS, 0, 0, d * CS, mx * d, my * d);
+  cctx.clip(arrow);
+  cctx.setTransform(d, 0, 0, d, 0, 0);
+  // interior transparente (sem preenchimento)
+  cctx.restore();
+  // vidro + contorno
+  cctx.save();
+  cctx.setTransform(d * CS, 0, 0, d * CS, mx * d, my * d);
+
+  cctx.lineJoin = "round";
+  cctx.strokeStyle = "#000"; cctx.lineWidth = 2.4; cctx.stroke(arrow);
+  cctx.strokeStyle = "#fff"; cctx.lineWidth = 1; cctx.stroke(arrow);
+  cctx.strokeStyle = "rgba(255,255,255,.8)"; cctx.lineWidth = .5; cctx.lineCap = "round";
+
+  cctx.restore();
+}
+
+let activeN = 150, accT = 0, accF = 0, born = 0;   // qualidade adaptativa
+function frame(t) {
+  const dt = Math.min((t - last) / 1000, .04); last = t;
+  // se o aparelho não acompanha, reduz colunas; se sobra força, volta a aumentar
+  accT += dt; accF++; born += dt;
+  if (born < 1.8) activeN = Math.min(N, Math.max(activeN, 150 + N * born / 1.8)); // sobe aos poucos na abertura
+  if (accF >= 30) {
+    const avg = accT / accF;
+    if (born < 3) { /* aquecendo: não reduz */ }
+    else if (avg > .021) activeN = Math.max(1000, Math.floor(activeN * .9));
+    else if (avg < .0175 && activeN < N) activeN = Math.min(N, Math.ceil(activeN * 1.04));
+    accT = 0; accF = 0;
+  }
+  if (!active) { tx = Math.sin(t / 2800) * .6; ty = Math.cos(t / 3600) * .4; }
+  const k = 1 - Math.exp(-3 * dt); // suavização independente do FPS
+  camX += (tx * 1300 - camX) * k;
+  camY += (ty * 950 - camY) * k;
+  speed += ((boost ? 2600 : 500) - speed) * k;
+
+  // fundo: quase sem rastro normal; um pouco de rastro só no hiperespaço
+  ctx.globalAlpha = boost ? .5 : .75;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, H);
+
+  const cx = W / 2 - tx * 140, cy = H / 2 - ty * 100;
+  ctx.globalAlpha = 1;
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * .5);
+  g.addColorStop(0, "rgba(0,255,90,.10)"); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  // inclinação (banking): a visão gira um pouco ao virar a nave
+  const roll = (tx * 1300 - camX) / 1300 * 0.05 * Math.max(0, 1 - (speed - 500) / 1200);
+  ctx.save();
+  ctx.translate(W / 2, H / 2); ctx.rotate(roll); ctx.translate(-W / 2, -H / 2);
+  let curA = -1;
+  for (let n = 0; n < activeN; n++) {
+    const s = streams[n];
+    s.z -= speed * dt;
+    s.y += s.fall * dt;
+    if (s.y - s.len * GAP > SPREAD) s.y = -SPREAD;
+    if (s.z < NEAR) { respawn(s); continue; }
+
+    const sc = FOCAL / s.z;
+    const sx = cx + (s.x - camX) * sc;
+    if (sx < -60 || sx > W + 60) continue;
+    const size = Math.max(5, 36 * sc);
+    const fade = Math.min(1, (FAR - s.z) / 900) * Math.min(1, s.z / 220);
+    const half = size / 2;
+    for (let i = 0; i < s.len; i++) {
+      const sy = cy + (s.y - i * GAP - camY) * sc;
+      if (sy < -40 || sy > H + 40) continue;
+      // troca constante de algarismos: a cabeça muda todo frame, o resto muda rápido
+      if ((i === 0 && speed < 1200) || Math.random() < (speed > 1200 ? .03 : .12)) s.g[i] = ri();
+      const al = Math.round(fade * (1 - i / s.len) * 16) / 16;
+      if (al === 0) continue;
+      if (al !== curA) { ctx.globalAlpha = al; curA = al; }
+      ctx.drawImage(atlas, s.g[i] * CELL, i === 0 ? CELL : 0, CELL, CELL, sx - half, sy - half, size, size);
+    }
+  }
+  ctx.restore();
+  requestAnimationFrame(frame);
+}
+(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => {
+  requestAnimationFrame(t => { last = t; frame(t); });
+  setTimeout(() => cv.classList.add("on"), 400); // aquece escondido, depois aparece suave
+});
+</script>
+</body>
+</html>
